@@ -331,8 +331,20 @@ def uniform_quantize(
     # dimensions.
     output_shape = tensor_data.shape
     tensor_data = tensor_data.reshape([-1, output_shape[-1]])
-    scales = np.broadcast_to(scales, tensor_data.shape)
-    zero_points = np.broadcast_to(zero_points, tensor_data.shape)
+    # Broadcast against the ORIGINAL shape, then flatten the same way the data
+    # was flattened. Broadcasting straight to the already-2-D shape fails
+    # whenever the quantization parameters carry more axes than the flattened
+    # data -- a channelwise convolution weight has 4-D scales, so numpy raises
+    # "input operand has more dimensions than allowed by the axis remapping".
+    # Reachable only above the 32 MiB threshold, which is why 1x1 convolutions
+    # wide enough to cross it (e.g. [6144, 1, 1, 1536] float32 = 36 MiB) are
+    # where it shows up.
+    scales = np.reshape(
+        np.broadcast_to(scales, output_shape), tensor_data.shape
+    )
+    zero_points = np.reshape(
+        np.broadcast_to(zero_points, output_shape), tensor_data.shape
+    )
     ret = np.zeros(shape=tensor_data.shape, dtype=_get_numpy_dtype(qtype))
 
     # Use a chunk size corresponding to 32 MiB of input data.

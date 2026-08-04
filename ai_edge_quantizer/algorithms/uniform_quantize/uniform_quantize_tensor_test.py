@@ -168,6 +168,38 @@ class TensorUtilsTest(parameterized.TestCase):
 
     self.assertSequenceAlmostEqual(expected_tensor, quantized_tensor)
 
+  def test_uniform_quantize_channelwise_conv_weight_over_chunking_threshold(
+      self,
+  ):
+    """A 4-D weight past 32 MiB takes the chunked path; scales must follow it.
+
+    Above the threshold the data is flattened to two dimensions. Broadcasting
+    4-D channelwise scales against that flattened shape raises "input operand
+    has more dimensions than allowed by the axis remapping", so a 1x1
+    convolution wide enough to cross the threshold could not be quantized at
+    all. Shape taken from FastVLM's FastViT tower: [6144, 1, 1, 1536] float32
+    is 36 MiB, just over.
+    """
+    out_channels, in_channels = 6144, 1536
+    tensor = np.ones((out_channels, 1, 1, in_channels), dtype=np.float32)
+    self.assertGreater(tensor.nbytes, 32 * 1024 * 1024)
+
+    quantized = uniform_quantize_tensor.uniform_quantize(
+        tensor,
+        qtyping.UniformQuantParams(
+            quantized_dimension=0,
+            num_bits=8,
+            scale=np.full((out_channels, 1, 1, 1), 0.5, dtype=np.float32),
+            zero_point=np.zeros((out_channels, 1, 1, 1), dtype=np.int8),
+            symmetric=True,
+        ),
+    )
+
+    self.assertEqual(quantized.shape, tensor.shape)
+    # 1.0 / 0.5 == 2 everywhere, so a wrong reshape would not merely change the
+    # shape, it would misalign which scale applied to which output channel.
+    self.assertTrue(np.all(quantized == 2))
+
   def test_uniform_quantize_wrong_shape(self):
     tensor = [-3.0, 1.3, 2.4, 16.0]
 
